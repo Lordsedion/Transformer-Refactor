@@ -90,12 +90,15 @@ class Seq2SeqTransformer(nn.Module):
                  dropout: float = 0.1):
         
         super(Seq2SeqTransformer, self).__init__()
-        self.transformer = Transformer(d_model=emb_size,
-                                       nhead=nhead,
-                                       num_encoder_layers=num_encoder_layers,
-                                       num_decoder_layers=num_decoder_layers,
-                                       dim_feedforward=dim_feedforward,
-                                       dropout=dropout)
+        
+        self.transformer = Transformer(
+            d_model=emb_size,
+            nhead=nhead,
+            num_encoder_layers=num_encoder_layers,
+            num_decoder_layers=num_decoder_layers,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout
+            )
         
         self.generator = nn.Linear(emb_size, tgt_n_tasks)
         self.src_emb = nn.Linear(src_size, emb_size)
