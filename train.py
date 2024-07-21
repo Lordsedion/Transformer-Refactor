@@ -7,27 +7,53 @@ from fast_pytorch_kmeans import KMeans as th_Kmeans
 import torch
 import math
 
+
 def train_teacherEnforce(model, optimizer, train_dataloader, PAD_IDX,  BOS_IDX, EOS_IDX, DEVICE):
     model.train()
     losses = 0
     r = 0
-
+ 
     for src, tgt in train_dataloader:
         src = src.to(DEVICE)
         tgt = tgt.to(DEVICE)
         tgt_input = tgt[:-1, :, :].to(DEVICE)
-        src_mask, tgt_mask, src_padding_mask, tgt_padding_mask = create_mask(src, tgt_input, PAD_IDX, DEVICE)
+
+        src_mask, tgt_mask, src_padding_mask, tgt_padding_mask = create_mask(
+            src=src,
+            tgt=tgt,
+            PAD_IDX=PAD_IDX,
+            device=DEVICE,
+        )
+
         src_mask, tgt_mask, src_padding_mask, tgt_padding_mask = src_mask.to(DEVICE), tgt_mask.to(DEVICE), \
-                                                                 src_padding_mask.to(DEVICE), tgt_padding_mask.to(DEVICE)
-        logits = model(src, tgt_input, src_mask, tgt_mask, src_padding_mask, tgt_padding_mask, src_padding_mask).to(DEVICE)
+                src_padding_mask.to(DEVICE), tgt_padding_mask.to(DEVICE)
+        
+        logits = model(
+            src,
+            tgt_input,
+            src_mask,
+            tgt_mask,
+            src_padding_mask,
+            tgt_padding_mask,
+            src_padding_mask
+            ).to(DEVICE)
+        
         optimizer.zero_grad()
-
         tgt_out = tgt[1:, :, :].to(DEVICE)
-        loss = mse_loss(logits.reshape(-1), tgt_out.reshape(-1), 
-                        ignored_indices=torch.Tensor([PAD_IDX, BOS_IDX, EOS_IDX]).to(DEVICE), reduction='mean')
-        r += pearsonr_corr(logits.reshape(-1), tgt_out.reshape(-1), ignored_indices=torch.Tensor([PAD_IDX, BOS_IDX, EOS_IDX]).to(DEVICE))
-        loss.backward()
 
+        loss = mse_loss(
+            logits.reshape(-1),
+            tgt_out.reshape(-1), 
+            ignored_indices=torch.Tensor([PAD_IDX, BOS_IDX, EOS_IDX]).to(DEVICE), reduction='mean'
+            )
+        
+        r += pearsonr_corr(
+            logits.reshape(-1),
+            tgt_out.reshape(-1),
+            ignored_indices=torch.Tensor([PAD_IDX, BOS_IDX, EOS_IDX]).to(DEVICE)
+            )
+        
+        loss.backward()
         optimizer.step()
         losses += loss.item()
 
@@ -35,37 +61,77 @@ def train_teacherEnforce(model, optimizer, train_dataloader, PAD_IDX,  BOS_IDX, 
 
 
 def evaluate(model, val_dataloader, PAD_IDX,  BOS_IDX, EOS_IDX, DEVICE):
-    # this function test the performance based on teacher forcing
+    """ 
+        This function test the performance based on teacher training
+
+    """
+
     model.eval()
     losses = 0
     r = 0
+
     with torch.no_grad():
         for src, tgt in val_dataloader:
             src = src.to(DEVICE)
             tgt = tgt.to(DEVICE)
             tgt_input = tgt[:-1, :, :]
-            src_mask, tgt_mask, src_padding_mask, tgt_padding_mask = create_mask(src, tgt_input, PAD_IDX, DEVICE)
+
+            src_mask, tgt_mask, src_padding_mask, tgt_padding_mask = create_mask(
+                src,
+                tgt_input,
+                PAD_IDX,
+                DEVICE
+                )
             
-            logits = model(src, tgt_input, src_mask, tgt_mask,src_padding_mask, tgt_padding_mask, src_padding_mask)
+            logits = model(
+                src,
+                tgt_input,
+                src_mask,
+                tgt_mask,
+                src_padding_mask,
+                tgt_padding_mask,
+                src_padding_mask
+                )
 
             tgt_out = tgt[1:, :, :]
-            loss = mse_loss(logits.reshape(-1), tgt_out.reshape(-1), 
-                            ignored_indices=torch.Tensor([PAD_IDX, BOS_IDX, EOS_IDX]).to(DEVICE), reduction='mean')
-            r += pearsonr_corr(logits.reshape(-1), tgt_out.reshape(-1), ignored_indices=torch.Tensor([PAD_IDX, BOS_IDX, EOS_IDX]).to(DEVICE))
+
+            loss = mse_loss(
+                logits.reshape(-1),
+                tgt_out.reshape(-1),
+                ignored_indices=torch.Tensor([PAD_IDX, BOS_IDX, EOS_IDX]).to(DEVICE), reduction='mean'
+                )
+            
+            r += pearsonr_corr(
+                logits.reshape(-1),
+                tgt_out.reshape(-1),
+                ignored_indices=torch.Tensor([PAD_IDX, BOS_IDX, EOS_IDX]).to(DEVICE)
+                )
+
             losses += loss.item()
 
     return losses / len(list(val_dataloader)), r / len(list(val_dataloader))
 
 
 def run_batch(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt):
-    # this function runs part of the inference for each sample
+
+    """
+        This function runs part of the inference for each sample
+
+    """
+
     max_len = max_lens[sample_n]
     ys = torch.ones(1, 1, n_tasks).fill_(BOS_IDX).to(DEVICE) #.type(torch.long)
     memories = []
+
     for i in range(max_len-1):
         src_ = src[0:(i+1), sample_n:(sample_n+1), :]
-        src_mask = torch.zeros((src_.shape[0], src_.shape[0]),device=DEVICE).type(torch.bool) #generate_square_subsequent_mask(src_.shape[0]).to(DEVICE)
-        tgt_mask = torch.zeros((ys.shape[0], ys.shape[0]),device=DEVICE).type(torch.bool) #(generate_square_subsequent_mask(ys.size(0)).type(torch.bool)).to(DEVICE)
+        
+        #generate_square_subsequent_mask(src_.shape[0]).to(DEVICE)
+        src_mask = torch.zeros((src_.shape[0], src_.shape[0]),device=DEVICE).type(torch.bool) 
+
+        #(generate_square_subsequent_mask(ys.size(0)).type(torch.bool)).to(DEVICE)
+        tgt_mask = torch.zeros((ys.shape[0], ys.shape[0]),device=DEVICE).type(torch.bool) 
+
         memory = transformer.encode(src_, src_mask).to(DEVICE)
         memories += [torch.clone(memory).detach().cpu()]
         out = transformer.decode(ys, memory, tgt_mask)
@@ -76,22 +142,35 @@ def run_batch(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tg
     
     tgt_noBOSEOS = tgt[1:max_len, sample_n:(sample_n+1), :].detach().cpu().numpy()
     ys_noBOSEOS = ys[1:, :, :].detach().cpu().numpy()
+
+    # Empty the memory
     torch.cuda.empty_cache()
     gc.collect()
     
-    return ys[1:, :, :], tgt[1:max_len, sample_n:(sample_n+1), :], ys_noBOSEOS, tgt_noBOSEOS, torch.cat(memories).detach().cpu().numpy()
-
+    return (
+        ys[1:, :, :],
+        tgt[1:max_len,sample_n:(sample_n+1), :],
+        ys_noBOSEOS,
+        tgt_noBOSEOS,
+        torch.cat(memories).detach().cpu().numpy()
+    )
 
 
 def run_batch_sliding(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt, sl):
-    # this function runs part of the inference for each sample
+    """
+        This function runs part of the inference for each sample
+
+    """
+
     max_len = max_lens[sample_n]
     ys = torch.ones(1, 1, n_tasks).fill_(BOS_IDX).to(DEVICE) #.type(torch.long)
     memories = []
+
     for i in range(max_len-1):
         ys_sl = ys if ys.shape[0]<=sl else ys[-sl:,:,:]
         src_ = src[0:(i+1), sample_n:(sample_n+1), :]
         src_sl = src_ if src_.shape[0]<=sl else src_[-sl:, :,:]
+
         src_mask = torch.zeros((src_sl.shape[0], src_sl.shape[0]),device=DEVICE).type(torch.bool) #generate_square_subsequent_mask(src_.shape[0]).to(DEVICE)
         tgt_mask = torch.zeros((ys_sl.shape[0], ys_sl.shape[0]),device=DEVICE).type(torch.bool) #(generate_square_subsequent_mask(ys.size(0)).type(torch.bool)).to(DEVICE)
         memory = transformer.encode(src_sl, src_mask).to(DEVICE)
@@ -100,6 +179,7 @@ def run_batch_sliding(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer,
         out = out.transpose(0, 1)
         pred = transformer.generator(out[:, -1, :])
         pred = pred.reshape([pred.shape[0], 1, pred.shape[1]])
+
         ys = torch.cat([ys, pred], dim=0)
         
     tgt_noBOSEOS = tgt[1:max_len, sample_n:(sample_n+1), :].detach().cpu().numpy()
@@ -113,14 +193,21 @@ def run_batch_sliding(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer,
 
 
 def run_batch_km(km, sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt):
-    # this function runs part of the inference for each sample
+
+    """
+        This function runs part of the inference for each sample
+
+    """
+
     max_len = max_lens[sample_n]
     ys = torch.ones(1, 1, n_tasks).fill_(BOS_IDX).to(DEVICE) #.type(torch.long)
+
     for i in range(max_len-1):
         src_ = src[0:(i+1), sample_n:(sample_n+1), :].to(DEVICE)
         src_mask = torch.zeros((src_.shape[0], src_.shape[0]),device=DEVICE).type(torch.bool) #generate_square_subsequent_mask(src_.shape[0]).to(DEVICE)
         tgt_mask = torch.zeros((ys.shape[0], ys.shape[0]),device=DEVICE).type(torch.bool) #(generate_square_subsequent_mask(ys.size(0)).type(torch.bool)).to(DEVICE)
         memory = transformer.encode(src_, src_mask).to(DEVICE)
+        
         x = memory.squeeze(1).detach().cpu().numpy()
         centers = torch.Tensor(km.cluster_centers_[km.predict(x), :]).unsqueeze(1).to(DEVICE)
         out = transformer.decode(ys, centers, tgt_mask)
@@ -128,6 +215,7 @@ def run_batch_km(km, sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, 
         pred = transformer.generator(out[:, -1, :])
         pred = pred.reshape([pred.shape[0], 1, pred.shape[1]])
         ys = torch.cat([ys, pred], dim=0)
+
     tgt_noBOSEOS = tgt[1:max_len, sample_n:(sample_n+1), :]
     ys_noBOSEOS = ys[1:, :, :]
 
@@ -135,15 +223,22 @@ def run_batch_km(km, sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, 
 
 
 def run_batch_cl(centers, sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, trans_IDEC, src, tgt):
-    # this function runs part of the inference for each sample
+
+    """
+        This function runs part of the inference for each sample
+
+    """
+
     max_len = max_lens[sample_n]
     ys = torch.ones(1, 1, n_tasks).fill_(BOS_IDX).to(DEVICE) #.type(torch.long)
     q = []
+
     for i in range(max_len-1):
         src_ = src[0:(i+1), sample_n:(sample_n+1), :].to(DEVICE)
         src_mask = torch.zeros((src_.shape[0], src_.shape[0]),device=DEVICE).type(torch.bool) #generate_square_subsequent_mask(src_.shape[0]).to(DEVICE)
         tgt_mask = torch.zeros((ys.shape[0], ys.shape[0]),device=DEVICE).type(torch.bool) #(generate_square_subsequent_mask(ys.size(0)).type(torch.bool)).to(DEVICE)
         memory = trans_IDEC.transformer.encode(src_, src_mask).to(DEVICE)
+
         z = memory.squeeze(1)
         tmp_q = trans_IDEC(z)
         q += [tmp_q.cpu()]
@@ -163,7 +258,12 @@ def run_batch_cl(centers, sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, trans_ID
 
 
 def run_batch_cl2(centers, sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, trans_IDEC, src, tgt):
-    # this function runs part of the inference for each sample
+
+    """
+        This function runs part of the inference for each sample
+    
+    """
+
     max_len = max_lens[sample_n]
     ys = torch.ones(1, 1, n_tasks).fill_(BOS_IDX).to(DEVICE) #.type(torch.long)
     q = []
@@ -174,6 +274,7 @@ def run_batch_cl2(centers, sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, trans_I
         memory = trans_IDEC.transformer.encode(src_, src_mask).to(DEVICE)
         out = trans_IDEC.transformer.decode(ys, memory, tgt_mask)
         out = out.transpose(0, 1)
+
         pred = trans_IDEC.transformer.generator(out[:, -1, :])
         pred = pred.reshape([pred.shape[0], 1, pred.shape[1]])
         tmp_q = trans_IDEC(pred.squeeze(1))
@@ -190,37 +291,55 @@ def run_batch_cl2(centers, sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, trans_I
 
 
 def run_batch2(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt, chances, cutoff):
-    # this function runs part of the inference for each sample
+    """
+         This function runs part of the inference for each sample
+    
+    """
     max_len = max_lens[sample_n]
     ys = torch.ones(1, 1, n_tasks).fill_(BOS_IDX).to(DEVICE) #.type(torch.long)
+
     for i in range(max_len-1):
         chance = chances[i, sample_n]
         if chance > cutoff:
             tgt_fill = tgt[(i+1), sample_n:(sample_n+1), :]
             tgt_fill = tgt_fill.reshape([tgt_fill.shape[0], 1, tgt_fill.shape[1]])
             ys = torch.cat([ys, tgt_fill], dim=0)
+
         else:
             src_ = src[0:(i+1), sample_n:(sample_n+1), :]
-            src_mask = torch.zeros((src_.shape[0], src_.shape[0]),device=DEVICE).type(torch.bool) #generate_square_subsequent_mask(src_.shape[0]).to(DEVICE)
-            tgt_mask = torch.zeros((ys.shape[0], ys.shape[0]),device=DEVICE).type(torch.bool) #(generate_square_subsequent_mask(ys.size(0)).type(torch.bool)).to(DEVICE)
+            
+            src_mask = torch.zeros((src_.shape[0], src_.shape[0]),device=DEVICE).type(torch.bool) 
+            tgt_mask = torch.zeros((ys.shape[0], ys.shape[0]),device=DEVICE).type(torch.bool)
             memory = transformer.encode(src_, src_mask).to(DEVICE)
             out = transformer.decode(ys, memory, tgt_mask)
             out = out.transpose(0, 1)
+
             pred = transformer.generator(out[:, -1, :])
             pred = pred.reshape([pred.shape[0], 1, pred.shape[1]])
             ys = torch.cat([ys, pred], dim=0)
+
     tgt_noBOSEOS = tgt[1:max_len, sample_n:(sample_n+1), :]
     ys_noBOSEOS = ys[1:, :, :]
     
-    return ys[1:, :, :], tgt[1:max_len, sample_n:(sample_n+1), :], ys_noBOSEOS, tgt_noBOSEOS
-
+    return (
+        ys[1:, :, :],
+        tgt[1:max_len,sample_n:(sample_n+1), :],
+        ys_noBOSEOS,
+        tgt_noBOSEOS
+        )
 
 
 def run_batch3(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt, cutoff):
-    # this function runs part of the inference for each sample
+
+    """ 
+    This function runs part of the inference for each sample
+    
+    """
+
     max_len = max_lens[sample_n]
     ys = torch.ones(1, 1, n_tasks).fill_(BOS_IDX).to(DEVICE) #.type(torch.long)
     intervene = []
+    
     for i in range(max_len-1):
         src_ = src[0:(i+1), sample_n:(sample_n+1), :]
         src_mask = torch.zeros((src_.shape[0], src_.shape[0]),device=DEVICE).type(torch.bool) #generate_square_subsequent_mask(src_.shape[0]).to(DEVICE)
