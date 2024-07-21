@@ -73,8 +73,8 @@ class multi_head(nn.Module):
 class Seq2SeqTransformer(nn.Module):
 
     """
-        A Seq2Seq Transformer network for sequence-to-sequence tasks, with separate embedding layers for source and target,
-        positional encoding, and a feedforward network for generating the final output.
+        A Seq2Seq Transformer network for sequence-to-sequence tasks, with separate embedding layers
+        for source and target,positional encoding, and a feedforward network for generating the final output.
 
     """
 
@@ -157,7 +157,8 @@ class Seq2SeqTransformer_IDEC(nn.Module):
 
     """
         A Seq2Seq Transformer network with an enhanced IDEC clustering mechanism,
-        including characteristics like layer initialization 
+        including characteristics like layer initialization.
+        
     """
 
     def __init__(

@@ -19,9 +19,6 @@ input_var = ["gest_age", "bw", "day_since_birth", 'RxDay',
             'race_concept_id_8527', 'race_concept_id_8557', 'race_concept_id_8657',
             'FatProduct_SMOFlipid 20%', 'FatProduct_Intralipid 20%', 'FatProduct_Omegaven 10%']
 
-# 'DBili_lab_value',
-# 'Zn_lab_value',
-
 """
     Output variables
 """
