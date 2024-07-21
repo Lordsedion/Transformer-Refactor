@@ -1,0 +1,831 @@
+from utils import *
+from itertools import compress
+import gc
+import numpy as np
+import torch.nn.functional as F
+from fast_pytorch_kmeans import KMeans as th_Kmeans
+import torch
+import math
+
+def train_teacherEnforce(model, optimizer, train_dataloader, PAD_IDX,  BOS_IDX, EOS_IDX, DEVICE):
+    model.train()
+    losses = 0
+    r = 0
+
+    for src, tgt in train_dataloader:
+        src = src.to(DEVICE)
+        tgt = tgt.to(DEVICE)
+        tgt_input = tgt[:-1, :, :].to(DEVICE)
+        src_mask, tgt_mask, src_padding_mask, tgt_padding_mask = create_mask(src, tgt_input, PAD_IDX, DEVICE)
+        src_mask, tgt_mask, src_padding_mask, tgt_padding_mask = src_mask.to(DEVICE), tgt_mask.to(DEVICE), \
+                                                                 src_padding_mask.to(DEVICE), tgt_padding_mask.to(DEVICE)
+        logits = model(src, tgt_input, src_mask, tgt_mask, src_padding_mask, tgt_padding_mask, src_padding_mask).to(DEVICE)
+        optimizer.zero_grad()
+
+        tgt_out = tgt[1:, :, :].to(DEVICE)
+        loss = mse_loss(logits.reshape(-1), tgt_out.reshape(-1), 
+                        ignored_indices=torch.Tensor([PAD_IDX, BOS_IDX, EOS_IDX]).to(DEVICE), reduction='mean')
+        r += pearsonr_corr(logits.reshape(-1), tgt_out.reshape(-1), ignored_indices=torch.Tensor([PAD_IDX, BOS_IDX, EOS_IDX]).to(DEVICE))
+        loss.backward()
+
+        optimizer.step()
+        losses += loss.item()
+
+    return losses / len(list(train_dataloader)), r / len(list(train_dataloader))
+
+
+def evaluate(model, val_dataloader, PAD_IDX,  BOS_IDX, EOS_IDX, DEVICE):
+    # this function test the performance based on teacher forcing
+    model.eval()
+    losses = 0
+    r = 0
+    with torch.no_grad():
+        for src, tgt in val_dataloader:
+            src = src.to(DEVICE)
+            tgt = tgt.to(DEVICE)
+            tgt_input = tgt[:-1, :, :]
+            src_mask, tgt_mask, src_padding_mask, tgt_padding_mask = create_mask(src, tgt_input, PAD_IDX, DEVICE)
+            
+            logits = model(src, tgt_input, src_mask, tgt_mask,src_padding_mask, tgt_padding_mask, src_padding_mask)
+
+            tgt_out = tgt[1:, :, :]
+            loss = mse_loss(logits.reshape(-1), tgt_out.reshape(-1), 
+                            ignored_indices=torch.Tensor([PAD_IDX, BOS_IDX, EOS_IDX]).to(DEVICE), reduction='mean')
+            r += pearsonr_corr(logits.reshape(-1), tgt_out.reshape(-1), ignored_indices=torch.Tensor([PAD_IDX, BOS_IDX, EOS_IDX]).to(DEVICE))
+            losses += loss.item()
+
+    return losses / len(list(val_dataloader)), r / len(list(val_dataloader))
+
+
+def run_batch(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt):
+    # this function runs part of the inference for each sample
+    max_len = max_lens[sample_n]
+    ys = torch.ones(1, 1, n_tasks).fill_(BOS_IDX).to(DEVICE) #.type(torch.long)
+    memories = []
+    for i in range(max_len-1):
+        src_ = src[0:(i+1), sample_n:(sample_n+1), :]
+        src_mask = torch.zeros((src_.shape[0], src_.shape[0]),device=DEVICE).type(torch.bool) #generate_square_subsequent_mask(src_.shape[0]).to(DEVICE)
+        tgt_mask = torch.zeros((ys.shape[0], ys.shape[0]),device=DEVICE).type(torch.bool) #(generate_square_subsequent_mask(ys.size(0)).type(torch.bool)).to(DEVICE)
+        memory = transformer.encode(src_, src_mask).to(DEVICE)
+        memories += [torch.clone(memory).detach().cpu()]
+        out = transformer.decode(ys, memory, tgt_mask)
+        out = out.transpose(0, 1)
+        pred = transformer.generator(out[:, -1, :])
+        pred = pred.reshape([pred.shape[0], 1, pred.shape[1]])
+        ys = torch.cat([ys, pred], dim=0)
+    
+    tgt_noBOSEOS = tgt[1:max_len, sample_n:(sample_n+1), :].detach().cpu().numpy()
+    ys_noBOSEOS = ys[1:, :, :].detach().cpu().numpy()
+    torch.cuda.empty_cache()
+    gc.collect()
+    
+    return ys[1:, :, :], tgt[1:max_len, sample_n:(sample_n+1), :], ys_noBOSEOS, tgt_noBOSEOS, torch.cat(memories).detach().cpu().numpy()
+
+
+
+def run_batch_sliding(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt, sl):
+    # this function runs part of the inference for each sample
+    max_len = max_lens[sample_n]
+    ys = torch.ones(1, 1, n_tasks).fill_(BOS_IDX).to(DEVICE) #.type(torch.long)
+    memories = []
+    for i in range(max_len-1):
+        ys_sl = ys if ys.shape[0]<=sl else ys[-sl:,:,:]
+        src_ = src[0:(i+1), sample_n:(sample_n+1), :]
+        src_sl = src_ if src_.shape[0]<=sl else src_[-sl:, :,:]
+        src_mask = torch.zeros((src_sl.shape[0], src_sl.shape[0]),device=DEVICE).type(torch.bool) #generate_square_subsequent_mask(src_.shape[0]).to(DEVICE)
+        tgt_mask = torch.zeros((ys_sl.shape[0], ys_sl.shape[0]),device=DEVICE).type(torch.bool) #(generate_square_subsequent_mask(ys.size(0)).type(torch.bool)).to(DEVICE)
+        memory = transformer.encode(src_sl, src_mask).to(DEVICE)
+        memories += [torch.clone(memory).detach().cpu()]
+        out = transformer.decode(ys_sl, memory, tgt_mask)
+        out = out.transpose(0, 1)
+        pred = transformer.generator(out[:, -1, :])
+        pred = pred.reshape([pred.shape[0], 1, pred.shape[1]])
+        ys = torch.cat([ys, pred], dim=0)
+        
+    tgt_noBOSEOS = tgt[1:max_len, sample_n:(sample_n+1), :].detach().cpu().numpy()
+    ys_noBOSEOS = ys[1:, :, :].detach().cpu().numpy()
+    torch.cuda.empty_cache()
+    gc.collect()
+    
+    return ys[1:, :, :], tgt[1:max_len, sample_n:(sample_n+1), :], ys_noBOSEOS, tgt_noBOSEOS, torch.cat(memories).detach().cpu().numpy()
+
+
+
+
+def run_batch_km(km, sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt):
+    # this function runs part of the inference for each sample
+    max_len = max_lens[sample_n]
+    ys = torch.ones(1, 1, n_tasks).fill_(BOS_IDX).to(DEVICE) #.type(torch.long)
+    for i in range(max_len-1):
+        src_ = src[0:(i+1), sample_n:(sample_n+1), :].to(DEVICE)
+        src_mask = torch.zeros((src_.shape[0], src_.shape[0]),device=DEVICE).type(torch.bool) #generate_square_subsequent_mask(src_.shape[0]).to(DEVICE)
+        tgt_mask = torch.zeros((ys.shape[0], ys.shape[0]),device=DEVICE).type(torch.bool) #(generate_square_subsequent_mask(ys.size(0)).type(torch.bool)).to(DEVICE)
+        memory = transformer.encode(src_, src_mask).to(DEVICE)
+        x = memory.squeeze(1).detach().cpu().numpy()
+        centers = torch.Tensor(km.cluster_centers_[km.predict(x), :]).unsqueeze(1).to(DEVICE)
+        out = transformer.decode(ys, centers, tgt_mask)
+        out = out.transpose(0, 1)
+        pred = transformer.generator(out[:, -1, :])
+        pred = pred.reshape([pred.shape[0], 1, pred.shape[1]])
+        ys = torch.cat([ys, pred], dim=0)
+    tgt_noBOSEOS = tgt[1:max_len, sample_n:(sample_n+1), :]
+    ys_noBOSEOS = ys[1:, :, :]
+
+    return ys[1:, :, :], tgt[1:max_len, sample_n:(sample_n+1), :], ys_noBOSEOS, tgt_noBOSEOS
+
+
+def run_batch_cl(centers, sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, trans_IDEC, src, tgt):
+    # this function runs part of the inference for each sample
+    max_len = max_lens[sample_n]
+    ys = torch.ones(1, 1, n_tasks).fill_(BOS_IDX).to(DEVICE) #.type(torch.long)
+    q = []
+    for i in range(max_len-1):
+        src_ = src[0:(i+1), sample_n:(sample_n+1), :].to(DEVICE)
+        src_mask = torch.zeros((src_.shape[0], src_.shape[0]),device=DEVICE).type(torch.bool) #generate_square_subsequent_mask(src_.shape[0]).to(DEVICE)
+        tgt_mask = torch.zeros((ys.shape[0], ys.shape[0]),device=DEVICE).type(torch.bool) #(generate_square_subsequent_mask(ys.size(0)).type(torch.bool)).to(DEVICE)
+        memory = trans_IDEC.transformer.encode(src_, src_mask).to(DEVICE)
+        z = memory.squeeze(1)
+        tmp_q = trans_IDEC(z)
+        q += [tmp_q.cpu()]
+        clus_pred = tmp_q.argmax(1)
+        center = torch.vstack([centers[i, :] for i in clus_pred]).unsqueeze(1)
+        out = trans_IDEC.transformer.decode(ys, center, tgt_mask)
+        out = out.transpose(0, 1)
+        pred = trans_IDEC.transformer.generator(out[:, -1, :])
+        pred = pred.reshape([pred.shape[0], 1, pred.shape[1]])
+        ys = torch.cat([ys, pred], dim=0)
+    
+    tgt_noBOSEOS = tgt[1:max_len, sample_n:(sample_n+1), :]
+    ys_noBOSEOS = ys[1:, :, :]
+    q = torch.vstack(q)
+    return ys[1:, :, :], tgt[1:max_len, sample_n:(sample_n+1), :], ys_noBOSEOS, tgt_noBOSEOS, q
+
+
+
+def run_batch_cl2(centers, sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, trans_IDEC, src, tgt):
+    # this function runs part of the inference for each sample
+    max_len = max_lens[sample_n]
+    ys = torch.ones(1, 1, n_tasks).fill_(BOS_IDX).to(DEVICE) #.type(torch.long)
+    q = []
+    for i in range(max_len-1):
+        src_ = src[0:(i+1), sample_n:(sample_n+1), :].to(DEVICE)
+        src_mask = torch.zeros((src_.shape[0], src_.shape[0]),device=DEVICE).type(torch.bool) #generate_square_subsequent_mask(src_.shape[0]).to(DEVICE)
+        tgt_mask = torch.zeros((ys.shape[0], ys.shape[0]),device=DEVICE).type(torch.bool) #(generate_square_subsequent_mask(ys.size(0)).type(torch.bool)).to(DEVICE)
+        memory = trans_IDEC.transformer.encode(src_, src_mask).to(DEVICE)
+        out = trans_IDEC.transformer.decode(ys, memory, tgt_mask)
+        out = out.transpose(0, 1)
+        pred = trans_IDEC.transformer.generator(out[:, -1, :])
+        pred = pred.reshape([pred.shape[0], 1, pred.shape[1]])
+        tmp_q = trans_IDEC(pred.squeeze(1))
+        q += [tmp_q.cpu()]
+        clus_pred = tmp_q.argmax(1)
+        center = torch.vstack([centers[i, :] for i in clus_pred]).unsqueeze(1)
+        ys = torch.cat([ys, pred], dim=0)
+    
+    tgt_noBOSEOS = tgt[1:max_len, sample_n:(sample_n+1), :]
+    ys_noBOSEOS = ys[1:, :, :]
+    q = torch.vstack(q)
+    return ys[1:, :, :], tgt[1:max_len, sample_n:(sample_n+1), :], ys_noBOSEOS, tgt_noBOSEOS, q
+
+
+
+def run_batch2(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt, chances, cutoff):
+    # this function runs part of the inference for each sample
+    max_len = max_lens[sample_n]
+    ys = torch.ones(1, 1, n_tasks).fill_(BOS_IDX).to(DEVICE) #.type(torch.long)
+    for i in range(max_len-1):
+        chance = chances[i, sample_n]
+        if chance > cutoff:
+            tgt_fill = tgt[(i+1), sample_n:(sample_n+1), :]
+            tgt_fill = tgt_fill.reshape([tgt_fill.shape[0], 1, tgt_fill.shape[1]])
+            ys = torch.cat([ys, tgt_fill], dim=0)
+        else:
+            src_ = src[0:(i+1), sample_n:(sample_n+1), :]
+            src_mask = torch.zeros((src_.shape[0], src_.shape[0]),device=DEVICE).type(torch.bool) #generate_square_subsequent_mask(src_.shape[0]).to(DEVICE)
+            tgt_mask = torch.zeros((ys.shape[0], ys.shape[0]),device=DEVICE).type(torch.bool) #(generate_square_subsequent_mask(ys.size(0)).type(torch.bool)).to(DEVICE)
+            memory = transformer.encode(src_, src_mask).to(DEVICE)
+            out = transformer.decode(ys, memory, tgt_mask)
+            out = out.transpose(0, 1)
+            pred = transformer.generator(out[:, -1, :])
+            pred = pred.reshape([pred.shape[0], 1, pred.shape[1]])
+            ys = torch.cat([ys, pred], dim=0)
+    tgt_noBOSEOS = tgt[1:max_len, sample_n:(sample_n+1), :]
+    ys_noBOSEOS = ys[1:, :, :]
+    
+    return ys[1:, :, :], tgt[1:max_len, sample_n:(sample_n+1), :], ys_noBOSEOS, tgt_noBOSEOS
+
+
+
+def run_batch3(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt, cutoff):
+    # this function runs part of the inference for each sample
+    max_len = max_lens[sample_n]
+    ys = torch.ones(1, 1, n_tasks).fill_(BOS_IDX).to(DEVICE) #.type(torch.long)
+    intervene = []
+    for i in range(max_len-1):
+        src_ = src[0:(i+1), sample_n:(sample_n+1), :]
+        src_mask = torch.zeros((src_.shape[0], src_.shape[0]),device=DEVICE).type(torch.bool) #generate_square_subsequent_mask(src_.shape[0]).to(DEVICE)
+        tgt_mask = torch.zeros((ys.shape[0], ys.shape[0]),device=DEVICE).type(torch.bool) #(generate_square_subsequent_mask(ys.size(0)).type(torch.bool)).to(DEVICE)
+        memory = transformer.encode(src_, src_mask).to(DEVICE)
+        out = transformer.decode(ys, memory, tgt_mask)
+        out = out.transpose(0, 1)
+        pred = transformer.generator(out[:, -1, :])
+        pred = pred.reshape([pred.shape[0], 1, pred.shape[1]])
+        tgt_fill = tgt[(i+1), sample_n:(sample_n+1), :]
+        tgt_fill = tgt_fill.reshape([tgt_fill.shape[0], 1, tgt_fill.shape[1]])
+        # dist = np.abs(torch.mean(pred - tgt_fill).detach().cpu().numpy())
+        dist = math.dist(pred.detach().cpu().flatten().numpy(), tgt_fill.detach().cpu().flatten().numpy())
+        # dist = torch.mean(torch.abs(pred - tgt_fill)).detach().cpu().numpy()
+        if dist > cutoff:
+            ys = torch.cat([ys, tgt_fill], dim=0)
+            intervene += [1]
+        else: 
+            ys = torch.cat([ys, pred], dim=0)
+            intervene += [0]
+        
+    tgt_noBOSEOS = tgt[1:max_len, sample_n:(sample_n+1), :]
+    ys_noBOSEOS = ys[1:, :, :]
+    
+    return ys[1:, :, :], tgt[1:max_len, sample_n:(sample_n+1), :], ys_noBOSEOS, tgt_noBOSEOS, intervene
+
+
+
+
+def train_autoRegressive(transformer, n_tasks, train_dataloader, optimizer, PAD_IDX, BOS_IDX, DEVICE, fraction):
+    transformer.train()
+    losses = 0
+    n_samples = 0
+    y_all = []
+    tgt_all = []
+    memories = []
+    count = 0
+    chances = np.random.choice([0, 1], size=(len(train_dataloader)), p=[1-fraction, fraction])
+
+    if np.all(chances == 0): 
+        chances[np.random.randint(0, len(chances))] = 1
+
+    for i, (src, tgt) in enumerate(train_dataloader):    
+        if chances[i]==1:
+            src = src.to(DEVICE)
+            tgt = tgt.to(DEVICE)
+            max_lens = (src != PAD_IDX).transpose(0, 1)[:, :, 0].sum(axis=1)
+            yss = []
+            tgts = []
+            res = []
+            count += 1
+            # torch.manual_seed(count)
+            # chances = torch.rand(src.shape[0], src.shape[1])
+            for sample_n in range(src.shape[1]):
+                # res += [run_batch2(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt, chances)]
+                res += [run_batch(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt)]
+            
+            yss = [res[i][0] for i in range(len(res))]
+            tgts = [res[i][1] for i in range(len(res))]
+            y_all += [res[i][2].reshape(-1) for i in range(len(res))]
+            tgt_all += [res[i][3].reshape(-1) for i in range(len(res))]
+            memories += [res[i][4].squeeze(1) for i in range(len(res))]
+            yss = torch.concat(yss, axis=0).to(DEVICE)
+            tgts = torch.concat(tgts, axis=0).to(DEVICE)
+            optimizer.zero_grad()
+            # mask = (yss.reshape(-1) == tgts.reshape(-1))
+            # loss = torch.mean((yss.reshape(-1)[~mask]-tgts.reshape(-1)[~mask])**2)
+            loss = torch.mean((yss.reshape(-1)-tgts.reshape(-1))**2)
+            loss.backward()
+            optimizer.step()
+            losses += loss.item()
+            n_samples += src.shape[1]
+            torch.cuda.empty_cache()
+            gc.collect()
+    
+    return losses/count, y_all, tgt_all, n_samples, memories
+
+
+
+def train_autoRegressive_sl(transformer, n_tasks, train_dataloader, optimizer, PAD_IDX, BOS_IDX, DEVICE, fraction, sl=5):
+    transformer.train()
+    losses = 0
+    n_samples = 0
+    y_all = []
+    tgt_all = []
+    memories = []
+    count = 0
+    chances = np.random.choice([0, 1], size=(len(train_dataloader)), p=[1-fraction, fraction])
+    if np.all(chances == 0): 
+        chances[np.random.randint(0, len(chances))] = 1
+    
+    for i, (src, tgt) in enumerate(train_dataloader):    
+        if chances[i]==1:
+            src = src.to(DEVICE)
+            tgt = tgt.to(DEVICE)
+            max_lens = (src != PAD_IDX).transpose(0, 1)[:, :, 0].sum(axis=1)
+            yss = []
+            tgts = []
+            res = []
+            count += 1
+            # torch.manual_seed(count)
+            # chances = torch.rand(src.shape[0], src.shape[1])
+            for sample_n in range(src.shape[1]):
+                # res += [run_batch2(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt, chances)]
+                res += [run_batch_sliding(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt, sl)]
+            
+            yss = [res[i][0] for i in range(len(res))]
+            tgts = [res[i][1] for i in range(len(res))]
+            y_all += [res[i][2].reshape(-1) for i in range(len(res))]
+            tgt_all += [res[i][3].reshape(-1) for i in range(len(res))]
+            memories += [res[i][4].squeeze(1) for i in range(len(res))]
+            yss = torch.concat(yss, axis=0).to(DEVICE)
+            tgts = torch.concat(tgts, axis=0).to(DEVICE)
+            optimizer.zero_grad()
+            # mask = (yss.reshape(-1) == tgts.reshape(-1))
+            # loss = torch.mean((yss.reshape(-1)[~mask]-tgts.reshape(-1)[~mask])**2)
+            loss = torch.mean((yss.reshape(-1)-tgts.reshape(-1))**2)
+            loss.backward()
+            optimizer.step()
+            losses += loss.item()
+            n_samples += src.shape[1]
+            torch.cuda.empty_cache()
+            gc.collect()
+    
+    return losses/count, y_all, tgt_all, n_samples, memories
+
+
+def train_autoRegressive_clus(centers, p, trans_IDEC, n_tasks, train_dataloader, optimizer, PAD_IDX, BOS_IDX, DEVICE):
+    trans_IDEC.train()
+    trans_IDEC.transformer.train()
+    losses = 0
+    n_samples = 0
+    y_all = []
+    tgt_all = []
+    count = 0
+    n_samples_last = 0
+    last_q = 0
+    for i, (src, tgt) in enumerate(train_dataloader):
+        # chance = np.random.choice([0,1], 1)[0]
+        # if i%every==chance:
+        src = src.to(DEVICE)
+        tgt = tgt.to(DEVICE)
+        max_lens = (src != PAD_IDX).transpose(0, 1)[:, :, 0].sum(axis=1)
+        yss = []
+        tgts = []
+        res = []
+        count += 1
+        n_samples += src.shape[1]
+        # chances = torch.rand(src.shape[0], src.shape[1])
+        for sample_n in range(src.shape[1]):
+            res += [run_batch_cl(centers, sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, trans_IDEC, src, tgt)]
+                        
+        yss = [res[i][0] for i in range(len(res))]
+        tgts = [res[i][1] for i in range(len(res))]
+        y_all += [res[i][2].detach().cpu().numpy().reshape(-1) for i in range(len(res))]
+        tgt_all += [res[i][3].detach().cpu().numpy().reshape(-1) for i in range(len(res))]
+        q = torch.cat([res[i][4] for i in range(len(res))], axis=0)
+        yss = torch.concat(yss, axis=0).to(DEVICE)
+        tgts = torch.concat(tgts, axis=0).to(DEVICE)
+        optimizer.zero_grad()
+        loss = torch.mean((yss.reshape(-1)-tgts.reshape(-1))**2).cpu() + F.kl_div(q.log(), p[last_q:(last_q+q.shape[0]), :])
+        loss = loss.to(DEVICE)
+        loss.backward(retain_graph=True)
+        optimizer.step()
+        losses += loss.item()
+        torch.cuda.empty_cache()
+        gc.collect()
+        n_samples_last = n_samples
+        last_q += q.shape[0]
+                
+    return losses/count, y_all, tgt_all, n_samples
+
+
+
+
+def train_autoRegressive_q2(centers, p, trans_IDEC, n_tasks, train_dataloader, optimizer, PAD_IDX, BOS_IDX, DEVICE):
+    trans_IDEC.train()
+    trans_IDEC.transformer.train()
+    losses = 0
+    n_samples = 0
+    y_all = []
+    tgt_all = []
+    count = 0
+    n_samples_last = 0
+    last_q = 0
+    tmp_q = []
+    memories = []
+    for i, (src, tgt) in enumerate(train_dataloader):
+        # chance = np.random.choice([0,1], 1)[0]
+        # if i%every==chance:
+        src = src.to(DEVICE)
+        tgt = tgt.to(DEVICE)
+        max_lens = (src != PAD_IDX).transpose(0, 1)[:, :, 0].sum(axis=1)
+        yss = []
+        tgts = []
+        res = []
+        count += 1
+        n_samples += src.shape[1]
+        # chances = torch.rand(src.shape[0], src.shape[1])
+        for sample_n in range(src.shape[1]):
+                # res += [run_batch2(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt, chances)]
+                res += [run_batch(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, trans_IDEC.transformer, src, tgt)]
+        
+        yss = [res[i][0] for i in range(len(res))]
+        tgts = [res[i][1] for i in range(len(res))]
+        y_all_ = [res[i][2].reshape(-1) for i in range(len(res))]
+        y_all += y_all_
+        tgt_all += [res[i][3].reshape(-1) for i in range(len(res))]
+        mem = [res[i][4].squeeze(1) for i in range(len(res))]
+        memories += mem
+        yss = torch.concat(yss, axis=0).to(DEVICE)
+        tgts = torch.concat(tgts, axis=0).to(DEVICE)
+        z = torch.Tensor(np.concatenate(y_all_).reshape(-1, 17)).to(DEVICE)
+        q = trans_IDEC(z).detach().cpu()
+        tmp_q += [q]
+        optimizer.zero_grad()
+        loss = torch.mean((yss.reshape(-1)-tgts.reshape(-1))**2).cpu() + F.kl_div(q.log(), p[last_q:(last_q+q.shape[0]), :])
+        loss = loss.to(DEVICE)
+        loss.backward(retain_graph=True)
+        optimizer.step()
+        losses += loss.item()
+        torch.cuda.empty_cache()
+        gc.collect()
+        n_samples_last = n_samples
+        last_q += q.shape[0]
+                
+    return losses/count, y_all, tgt_all, n_samples, tmp_q
+
+
+
+
+
+def inference_clus2(centers, p, trans_IDEC, n_tasks, train_dataloader, optimizer, PAD_IDX, BOS_IDX, DEVICE):
+    trans_IDEC.transformer.eval()
+    trans_IDEC.eval()
+    losses = 0
+    n_samples = 0
+    n_samples_last = 0
+    y_all = []
+    tgt_all = []
+    count = 0
+    last_q = 0
+    with torch.no_grad():
+        for i, (src, tgt) in enumerate(train_dataloader):
+            # chance = np.random.choice([0,1], 1)[0]
+            # if i%every==chance:
+            src = src.to(DEVICE)
+            tgt = tgt.to(DEVICE)
+            max_lens = (src != PAD_IDX).transpose(0, 1)[:, :, 0].sum(axis=1)
+            yss = []
+            tgts = []
+            res = []
+            count += 1
+            n_samples += src.shape[1]
+            # chances = torch.rand(src.shape[0], src.shape[1])
+            for sample_n in range(src.shape[1]):
+                res += [run_batch_cl2(centers, sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, trans_IDEC, src, tgt)]
+            
+            yss = [res[i][0] for i in range(len(res))]
+            tgts = [res[i][1] for i in range(len(res))]
+            y_all += [res[i][2].detach().cpu().numpy().reshape(-1) for i in range(len(res))]
+            tgt_all += [res[i][3].detach().cpu().numpy().reshape(-1) for i in range(len(res))]
+            q = torch.cat([res[i][4] for i in range(len(res))], axis=0)
+            yss = torch.concat(yss, axis=0).to(DEVICE)
+            tgts = torch.concat(tgts, axis=0).to(DEVICE)
+            loss = torch.mean((yss.reshape(-1)-tgts.reshape(-1))**2) + F.kl_div(q.log(), p[last_q:(last_q+q.shape[0]), :])
+            losses += loss.item()
+            torch.cuda.empty_cache()
+            n_samples_last = n_samples
+            gc.collect()
+            last_q += q.shape[0]
+            
+    return losses/count, y_all, tgt_all, n_samples
+
+
+
+def inference_sample_sl(transformer, n_tasks, dataloader, optimizer, PAD_IDX, BOS_IDX, DEVICE, every, sl=5):
+    transformer.eval()
+    losses = 0
+    n_samples = 0
+    y_all = []
+    tgt_all = []
+    memories = []
+    count = 0
+    with torch.no_grad():
+        for i, (src, tgt) in enumerate(dataloader):    
+            if i%every==0:
+                src = src.to(DEVICE)
+                tgt = tgt.to(DEVICE)
+                max_lens = (src != PAD_IDX).transpose(0, 1)[:, :, 0].sum(axis=1)
+                yss = []
+                tgts = []
+                res = []
+                count += 1
+                # torch.manual_seed(count)
+                # chances = torch.rand(src.shape[0], src.shape[1])
+                for sample_n in range(src.shape[1]):
+                    res += [run_batch_sliding(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt, sl)]
+                
+                yss = [res[i][0] for i in range(len(res))]
+                tgts = [res[i][1] for i in range(len(res))]
+                y_all += [res[i][2].reshape(-1) for i in range(len(res))]
+                tgt_all += [res[i][3].reshape(-1) for i in range(len(res))]
+                memories += [res[i][4].squeeze(1) for i in range(len(res))]
+                yss = torch.concat(yss, axis=0).to(DEVICE)
+                tgts = torch.concat(tgts, axis=0).to(DEVICE)
+                loss = torch.mean((yss.reshape(-1)-tgts.reshape(-1))**2)
+                losses += loss.item()
+                n_samples += src.shape[1]
+                torch.cuda.empty_cache()
+                gc.collect()
+    
+    return losses/count, y_all, tgt_all, n_samples, memories
+
+
+
+def inference_sample(transformer, n_tasks, dataloader, optimizer, PAD_IDX, BOS_IDX, DEVICE, every=2):
+    transformer.eval()
+    losses = 0
+    n_samples = 0
+    count = 0
+    y_all = []
+    tgt_all = []
+    memories = []
+    with torch.no_grad():
+        for i, (src, tgt) in enumerate(dataloader):
+            if i%every==0:
+                count += 1
+                src = src.to(DEVICE)
+                tgt = tgt.to(DEVICE)
+                max_lens = (src != PAD_IDX).transpose(0, 1)[:, :, 0].sum(axis=1)
+                yss = []
+                tgts = []
+                res = []
+                torch.manual_seed(count)
+                chances = torch.rand(src.shape[0], src.shape[1])
+                for sample_n in range(src.shape[1]):
+                    # res += [run_batch2(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt, chances)]
+                    res += [run_batch(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt)]
+                
+                yss = [res[i][0] for i in range(len(res))]
+                tgts = [res[i][1] for i in range(len(res))]
+                y_all += [res[i][2].reshape(-1) for i in range(len(res))]
+                tgt_all += [res[i][3].reshape(-1) for i in range(len(res))]
+                memories += [res[i][4].squeeze(1) for i in range(len(res))]
+                yss = torch.concat(yss, axis=0).to(DEVICE)
+                tgts = torch.concat(tgts, axis=0).to(DEVICE)
+                loss = torch.mean((yss.reshape(-1)-tgts.reshape(-1))**2)
+                losses += loss.item()
+                n_samples += src.shape[1]
+                torch.cuda.empty_cache()
+                gc.collect()
+            
+    return losses/count, y_all, tgt_all, n_samples, memories
+
+
+
+def inference(transformer, n_tasks, dataloader, optimizer, PAD_IDX, BOS_IDX, DEVICE):
+    transformer.eval()
+    losses = 0
+    n_samples = 0
+    y_all = []
+    tgt_all = []
+    memories = []
+    count = 0
+    with torch.no_grad():
+        for src, tgt in dataloader:
+            count += 1
+            src = src.to(DEVICE)
+            tgt = tgt.to(DEVICE)
+            max_lens = (src != PAD_IDX).transpose(0, 1)[:, :, 0].sum(axis=1)
+            yss = []
+            tgts = []
+            res = []
+            # torch.manual_seed(count)
+            # chances = torch.rand(src.shape[0], src.shape[1])
+            for sample_n in range(src.shape[1]):
+                # res += [run_batch2(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt, chances)]
+                res += [run_batch(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt)]
+            
+            yss = [res[i][0] for i in range(len(res))]
+            tgts = [res[i][1] for i in range(len(res))]
+            y_all += [res[i][2].reshape(-1) for i in range(len(res))]
+            tgt_all += [res[i][3].reshape(-1) for i in range(len(res))]
+            memories += [res[i][4].squeeze(1) for i in range(len(res))]
+            yss = torch.concat(yss, axis=0).to(DEVICE)
+            tgts = torch.concat(tgts, axis=0).to(DEVICE)
+            loss = torch.mean((yss.reshape(-1)-tgts.reshape(-1))**2)
+            losses += loss.item()
+            n_samples += src.shape[1]
+            torch.cuda.empty_cache()
+            gc.collect()
+    
+    return losses / len(list(dataloader)), y_all, tgt_all, n_samples, memories
+
+
+
+def inference_prescription(transformer, n_tasks, dataloader, optimizer, PAD_IDX, BOS_IDX, DEVICE, cutoff):
+    # this function will run inference such that the top 10% furthest prescription vs. AI are replaced with
+    # the prescription itself.
+    transformer.eval()
+    losses = 0
+    n_samples = 0
+    y_all = []
+    tgt_all = []
+    intervene = []
+    count = 0
+    with torch.no_grad():
+        for src, tgt in dataloader:
+            count += 1
+            src = src.to(DEVICE)
+            tgt = tgt.to(DEVICE)
+            max_lens = (src != PAD_IDX).transpose(0, 1)[:, :, 0].sum(axis=1)
+            yss = []
+            tgts = []
+            res = []
+            # torch.manual_seed(count)
+            # chances = torch.rand(src.shape[0], src.shape[1])
+            for sample_n in range(src.shape[1]):
+                res += [run_batch3(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt, cutoff)]
+            
+            yss = [res[i][0] for i in range(len(res))]
+            tgts = [res[i][1] for i in range(len(res))]
+            intervene += [res[i][4] for i in range(len(res))]
+            y_all += [res[i][2].detach().cpu().numpy().reshape(-1) for i in range(len(res))]
+            tgt_all += [res[i][3].detach().cpu().numpy().reshape(-1) for i in range(len(res))]
+            yss = torch.concat(yss, axis=0).to(DEVICE)
+            tgts = torch.concat(tgts, axis=0).to(DEVICE)
+            mask = (yss.reshape(-1) == tgts.reshape(-1))
+            loss = torch.mean((yss.reshape(-1)[~mask]-tgts.reshape(-1)[~mask])**2)
+            losses += loss.item()
+            n_samples += src.shape[1]
+            torch.cuda.empty_cache()
+            gc.collect()
+            
+    return losses / len(list(dataloader)), y_all, tgt_all, n_samples, intervene
+
+
+def inference_predict(transformer, n_tasks, dataloader, PAD_IDX, BOS_IDX, DEVICE):
+    transformer.eval()
+    y_all = []
+    tgt_all = []
+    count = 0
+    with torch.no_grad():
+        for src, tgt in dataloader:
+            count += 1
+            src = src.to(DEVICE)
+            tgt = tgt.to(DEVICE)
+            max_lens = (src != PAD_IDX).transpose(0, 1)[:, :, 0].sum(axis=1)
+            res = []
+            torch.manual_seed(count)
+            chances = torch.rand(src.shape[0], src.shape[1])
+            for sample_n in range(src.shape[1]):
+                # res += [run_batch2(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt, chances)]
+                res += [run_batch(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt)]
+            
+            y_all += [res[i][2] for i in range(len(res))]
+            tgt_all += [res[i][3] for i in range(len(res))]
+            torch.cuda.empty_cache()
+            gc.collect()
+    
+    return np.concatenate(y_all, axis=0), np.concatenate(tgt_all, axis=0)
+
+
+def inference_predict_clus(km, transformer, n_tasks, dataloader, PAD_IDX, BOS_IDX, DEVICE):
+    transformer.eval()
+    y_all = []
+    tgt_all = []
+    count = 0
+    with torch.no_grad():
+        for src, tgt in dataloader:
+            count += 1
+            src = src.to(DEVICE)
+            tgt = tgt.to(DEVICE)
+            max_lens = (src != PAD_IDX).transpose(0, 1)[:, :, 0].sum(axis=1)
+            res = []
+            torch.manual_seed(count)
+            chances = torch.rand(src.shape[0], src.shape[1])
+            for sample_n in range(src.shape[1]):
+                # res += [run_batch2(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt, chances)]
+                res += [run_batch_km(km, sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt)]
+            
+            y_all += [res[i][2].detach().cpu().numpy() for i in range(len(res))]
+            tgt_all += [res[i][3].detach().cpu().numpy() for i in range(len(res))]
+            torch.cuda.empty_cache()
+            gc.collect()
+    
+    return np.concatenate(y_all, axis=0), np.concatenate(tgt_all, axis=0)
+
+
+def run_encode(sample_n, max_lens, DEVICE, transformer, src):
+    # this function runs part of the inference for each sample
+    max_len = max_lens[sample_n]
+    memories = []
+    for i in range(max_len-1):
+        src_ = src[0:(i+1), sample_n:(sample_n+1), :]
+        src_mask = torch.zeros((src_.shape[0], src_.shape[0]),device=DEVICE).type(torch.bool) #generate_square_subsequent_mask(src_.shape[0]).to(DEVICE)
+        memories += [transformer.encode(src_, src_mask).detach().to('cpu')[-1, :, :]]
+    
+    return torch.cat(memories, axis=0)
+
+
+def inference_encode(transformer, dataloader, PAD_IDX, DEVICE):
+    transformer.eval()
+    memories = []
+    with torch.no_grad():
+        for src, tgt in dataloader:
+            src = src.to(DEVICE)
+            tgt = tgt.to(DEVICE)
+            max_lens = (src != PAD_IDX).transpose(0, 1)[:, :, 0].sum(axis=1)
+            res = []
+            for sample_n in range(src.shape[1]):
+                res += [run_encode(sample_n, max_lens, DEVICE, transformer, src)]
+            
+            memories += [res[i] for i in range(len(res))]
+            torch.cuda.empty_cache()
+            gc.collect()
+    
+    return torch.cat(memories, axis=0)
+
+
+
+def inference_q(trans_IDEC, n_tasks, dataloader, optimizer, PAD_IDX, BOS_IDX, DEVICE):
+    trans_IDEC.transformer.eval()
+    losses = 0
+    n_samples = 0
+    y_all = []
+    tgt_all = []
+    memories = []
+    tmp_q = []
+    count = 0
+    with torch.no_grad():
+        for src, tgt in dataloader:
+            count += 1
+            src = src.to(DEVICE)
+            tgt = tgt.to(DEVICE)
+            max_lens = (src != PAD_IDX).transpose(0, 1)[:, :, 0].sum(axis=1)
+            yss = []
+            tgts = []
+            res = []
+            # torch.manual_seed(count)
+            # chances = torch.rand(src.shape[0], src.shape[1])
+            for sample_n in range(src.shape[1]):
+                # res += [run_batch2(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt, chances)]
+                res += [run_batch(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, trans_IDEC.transformer, src, tgt)]
+            
+            yss = [res[i][0] for i in range(len(res))]
+            tgts = [res[i][1] for i in range(len(res))]
+            y_all += [res[i][2].reshape(-1) for i in range(len(res))]
+            tgt_all += [res[i][3].reshape(-1) for i in range(len(res))]
+            mem = [res[i][4].squeeze(1) for i in range(len(res))]
+            memories += mem
+            z = torch.Tensor(np.concatenate(mem)).to(DEVICE)
+            tmp_q += [trans_IDEC(z).detach().cpu()]
+            yss = torch.concat(yss, axis=0).to(DEVICE)
+            tgts = torch.concat(tgts, axis=0).to(DEVICE)
+            loss = torch.mean((yss.reshape(-1)-tgts.reshape(-1))**2)
+            losses += loss.item()
+            n_samples += src.shape[1]
+            torch.cuda.empty_cache()
+            gc.collect()
+    
+    return losses / len(list(dataloader)), y_all, tgt_all, n_samples, memories, tmp_q
+
+
+
+def inference_q2(trans_IDEC, n_tasks, dataloader, optimizer, PAD_IDX, BOS_IDX, DEVICE):
+    trans_IDEC.transformer.eval()
+    losses = 0
+    n_samples = 0
+    y_all = []
+    tgt_all = []
+    memories = []
+    tmp_q = []
+    count = 0
+    with torch.no_grad():
+        for src, tgt in dataloader:
+            count += 1
+            src = src.to(DEVICE)
+            tgt = tgt.to(DEVICE)
+            max_lens = (src != PAD_IDX).transpose(0, 1)[:, :, 0].sum(axis=1)
+            yss = []
+            tgts = []
+            res = []
+            # torch.manual_seed(count)
+            # chances = torch.rand(src.shape[0], src.shape[1])
+            for sample_n in range(src.shape[1]):
+                # res += [run_batch2(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt, chances)]
+                res += [run_batch(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, trans_IDEC.transformer, src, tgt)]
+            
+            yss = [res[i][0] for i in range(len(res))]
+            tgts = [res[i][1] for i in range(len(res))]
+            y_all += [res[i][2].reshape(-1) for i in range(len(res))]
+            tgt_all += [res[i][3].reshape(-1) for i in range(len(res))]
+            mem = [res[i][4].squeeze(1) for i in range(len(res))]
+            memories += mem
+            yss = torch.concat(yss, axis=0).to(DEVICE)
+            tgts = torch.concat(tgts, axis=0).to(DEVICE)
+            loss = torch.mean((yss.reshape(-1)-tgts.reshape(-1))**2)
+            losses += loss.item()
+            n_samples += src.shape[1]
+            torch.cuda.empty_cache()
+            gc.collect()
+    
+    z = torch.Tensor(np.concatenate(y_all).reshape(-1, 17)).to(DEVICE)
+    tmp_q += [trans_IDEC(z).detach().cpu()]
+    
+    return losses / len(list(dataloader)), y_all, tgt_all, n_samples, memories, tmp_q
