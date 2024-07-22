@@ -234,8 +234,8 @@ for epoch in range(1, NUM_EPOCHS+1):
 
 # Loading the best saved transformer state
 transformer.load_state_dict(best_model_state)
-torch.save(transformer.state_dict(), '/state_dicts/cv34_embed512_final.pth')
-transformer.load_state_dict(torch.load('/state_dicts/cv34_embed512_final.pth'))
+torch.save(transformer.state_dict(), 'state_dicts/cv34_embed512_final.pth')
+transformer.load_state_dict(torch.load('state_dicts/cv34_embed512_final.pth'))
 
 # test set eval
 val_loss, y_all_val_, tgt_all_val_, n_samples_, _ = inference(
@@ -448,4 +448,4 @@ for percentile in percentiles:
     all_data[['noscaled_scaled_'+str(i) for i in vars_3]] = output_scaler.inverse_transform(all_data[['scaled_'+str(i) for i in vars_3]])
     all_data[['noscaled_pred_'+str(i) for i in vars_3]] = output_scaler.inverse_transform(all_data[['pred_'+str(i) for i in vars_3]])
     all_data[['noscaled_presc_'+str(i) for i in vars_3]] = output_scaler.inverse_transform(all_data[['presc_'+str(i) for i in vars_3]])
-    all_data.to_csv(path+'/data/prescrip_pred_data_'+str(100-percentile)+'.csv', index=False)
+    all_data.to_csv('data/prescrip_pred_data_'+str(100-percentile)+'.csv', index=False)
