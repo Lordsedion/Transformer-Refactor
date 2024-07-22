@@ -19,12 +19,12 @@ from .vars import input_var, vars_3
 # Load the data using pandas
 path = "/data/mock_data.csv"
 data_test = pd.read_csv(path, low_memory=False)
-X_ = data_test.set_index("MedicalRecordNum", drop=False).loc[:, data_test.columns.isin(input_var)].copy() # Set the index to 'MedicalRecordNum' and filter columns using 'input_var'
-y_ = data_test.set_index("MedicalRecordNum", drop=False).loc[:, data_test.columns.isin(vars_3)].copy() # Set the index to 'MedicalRecordNum' and filter columns using 'vars_3'
-X_list = [torch.Tensor(X_.loc[i, :].to_numpy()) for i in X_.index.unique()] # Convert each row of X_ DataFrame to a PyTorch Tensor and store in a list
-y_list = [torch.Tensor(y_.loc[i, :].to_numpy()) for i in y_.index.unique()] # Convert each row of y_ DataFrame to a PyTorch Tensor and store in a list
-X_list = [i.unsqueeze(0) if len(i.shape) == 1 else i for i in X_list] # Add a new dimension at the 0th index if the tensor has only 1 dimension
-y_list = [i.unsqueeze(0) if len(i.shape) == 1 else i for i in y_list] # Add a new dimension at the 0th index if the tensor has only 1 dimension
+X_ = data_test.set_index("MedicalRecordNum", drop=False).loc[:, data_test.columns.isin(input_var)].copy()
+y_ = data_test.set_index("MedicalRecordNum", drop=False).loc[:, data_test.columns.isin(vars_3)].copy() 
+X_list = [torch.Tensor(X_.loc[i, :].to_numpy()) for i in X_.index.unique()]
+y_list = [torch.Tensor(y_.loc[i, :].to_numpy()) for i in y_.index.unique()]
+X_list = [i.unsqueeze(0) if len(i.shape) == 1 else i for i in X_list] 
+y_list = [i.unsqueeze(0) if len(i.shape) == 1 else i for i in y_list]
 
 
 def create_random_masks(data_length, val_portion, test_portion, random_state=42):
@@ -62,11 +62,11 @@ y_list = [torch.Tensor(output_scaler.transform(i)) for i in y_list]
 
 # Define special symbols and their indices
 PAD_IDX, BOS_IDX, EOS_IDX = 9999, 2, 3
-y_SOS = torch.Tensor([BOS_IDX]).repeat(y_list[0].shape[1]).unsqueeze(0) # Create the Start of Sequence (SOS) tensor for y_list
-y_EOS = torch.Tensor([EOS_IDX]).repeat(y_list[0].shape[1]).unsqueeze(0) # Create the End of Sequence (EOS) tensor for y_list
-X_EOS = torch.Tensor([EOS_IDX]).repeat(X_list[0].shape[1]).unsqueeze(0) # Create the End of Sequence (EOS) tensor for X_list
-X_list = [torch.vstack((x, X_EOS)) for x in X_list] # Add EOS to the end of each tensor in X_list
-y_list = [torch.vstack((y_SOS, y, y_EOS)) for y in y_list] # Add SOS at the beginning and EOS at the end of each tensor in y_list
+y_SOS = torch.Tensor([BOS_IDX]).repeat(y_list[0].shape[1]).unsqueeze(0)
+y_EOS = torch.Tensor([EOS_IDX]).repeat(y_list[0].shape[1]).unsqueeze(0)
+X_EOS = torch.Tensor([EOS_IDX]).repeat(X_list[0].shape[1]).unsqueeze(0)
+X_list = [torch.vstack((x, X_EOS)) for x in X_list]
+y_list = [torch.vstack((y_SOS, y, y_EOS)) for y in y_list]
 
 
 # Define model and parameters
@@ -251,7 +251,7 @@ val_loss, y_all_val_, tgt_all_val_, n_samples_, _ = inference(
 r_test = pearsonr(np.concatenate(y_all_val_), np.concatenate(tgt_all_val_))[0]
 print((f"Test loss: {val_loss:.3f}, Test r: {r_test:.3f}"))
 
-
+# Compute the median of Pearson coreelation coefficients for each variable
 np.median([pearsonr(
     np.concatenate(y_all_val_).reshape(-1, 17)[:, i],
     np.concatenate(tgt_all_val_).reshape(-1, 17)[:, i])[0] for i in range(len(vars_3))
@@ -347,11 +347,10 @@ np.concatenate(tgt_all_val_)[~mask] == np.concatenate(y_all_val_)[~mask]
 sample_wise_val_sub, sample_wise_test_sub, sample_wise_train_sub = [], [], []
 y_val_sub, y_test_sub, y_train_sub = [], [], []
 
+# Exporting predictions
 pd.DataFrame(r_prescrip_byNutri, index=vars_3).loc[:, percentiles].to_csv('performance/transformer_prescription.csv')
 
-# Exporting predictions
 percentiles = [90]
-
 for percentile in percentiles:
     cutoff = np.percentile(diff, percentile)
 

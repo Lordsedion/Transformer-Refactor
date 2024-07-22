@@ -32,7 +32,6 @@ def generate_square_subsequent_mask(sz, device):
 
     
 def create_mask(src, tgt, PAD_IDX, device):
-
     """
         Creates masks for the source and target sequence
         
@@ -68,7 +67,6 @@ def pearsonr_corr(input, target, ignored_indices):
 
 
 class EarlyStopping:
-
     """
         Early stopping utility to stop the training when the validation loss stops improving.
 

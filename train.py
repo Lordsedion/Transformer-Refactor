@@ -307,7 +307,7 @@ def run_batch2(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, t
     """
 
     max_len = max_lens[sample_n]
-    ys = torch.ones(1, 1, n_tasks).fill_(BOS_IDX).to(DEVICE) #.type(torch.long)
+    ys = torch.ones(1, 1, n_tasks).fill_(BOS_IDX).to(DEVICE)
 
     for i in range(max_len-1):
         chance = chances[i, sample_n]
@@ -318,7 +318,6 @@ def run_batch2(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, t
 
         else:
             src_ = src[0:(i+1), sample_n:(sample_n+1), :]
-            
             src_mask = torch.zeros((src_.shape[0], src_.shape[0]),device=DEVICE).type(torch.bool) 
             tgt_mask = torch.zeros((ys.shape[0], ys.shape[0]),device=DEVICE).type(torch.bool)
             memory = transformer.encode(src_, src_mask).to(DEVICE)
@@ -514,7 +513,6 @@ def train_autoRegressive_clus(centers, p, trans_IDEC, n_tasks, train_dataloader,
         yss = torch.concat(yss, axis=0).to(DEVICE)
         tgts = torch.concat(tgts, axis=0).to(DEVICE)
         optimizer.zero_grad()
-
         loss = torch.mean((yss.reshape(-1)-tgts.reshape(-1))**2).cpu() + F.kl_div(q.log(), p[last_q:(last_q+q.shape[0]), :])
         loss = loss.to(DEVICE)
         loss.backward(retain_graph=True)
@@ -574,7 +572,6 @@ def train_autoRegressive_q2(centers, p, trans_IDEC, n_tasks, train_dataloader, o
         q = trans_IDEC(z).detach().cpu()
         tmp_q += [q]
         optimizer.zero_grad()
-
         loss = torch.mean((yss.reshape(-1)-tgts.reshape(-1))**2).cpu() + F.kl_div(q.log(), p[last_q:(last_q+q.shape[0]), :])
         loss = loss.to(DEVICE)
         loss.backward(retain_graph=True)
