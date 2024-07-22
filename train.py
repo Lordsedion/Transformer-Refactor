@@ -31,7 +31,7 @@ def train_teacherEnforce(model, optimizer, train_dataloader, PAD_IDX,  BOS_IDX, 
 
         src_mask, tgt_mask, src_padding_mask, tgt_padding_mask = create_mask(
             src=src,
-            tgt=tgt,
+            tgt=tgt_input,
             PAD_IDX=PAD_IDX,
             device=DEVICE,
         )

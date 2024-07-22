@@ -14,10 +14,10 @@ from sklearn.cluster import KMeans
 from model import *
 from train import *
 from utils import *
-from .vars import input_var, vars_3
+from vars import input_var, vars_3
 
 # Load the data using pandas
-path = "/data/mock_data.csv"
+path = "data/mock_data.csv"
 data_test = pd.read_csv(path, low_memory=False)
 X_ = data_test.set_index("MedicalRecordNum", drop=False).loc[:, data_test.columns.isin(input_var)].copy()
 y_ = data_test.set_index("MedicalRecordNum", drop=False).loc[:, data_test.columns.isin(vars_3)].copy() 
