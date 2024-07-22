@@ -1,5 +1,6 @@
 """
-This script hadnles the training process.
+This script handles the training process process for various Transformer-based models.
+It includes features for training, evaluation, & inference.
 """
 __author__ = "AUTHOR_NAME_PLACEHOLDER"
 
@@ -14,7 +15,6 @@ import math
 
 
 def train_teacherEnforce(model, optimizer, train_dataloader, PAD_IDX,  BOS_IDX, EOS_IDX, DEVICE="cpu"):
-
     """
     Trains a seq2seq model with teacher forcing using MSE loss and Pearson correlation as a metric,
     iterating through batches, calculating loss & gradients, and updating model parameters.
@@ -205,9 +205,7 @@ def run_batch_sliding(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer,
 
 
 
-
 def run_batch_km(km, sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt):
-
     """
     Performs ssingle sample inference using a Transformer model and KMeans clustering on encoder to guide the decoder.
 
@@ -272,19 +270,18 @@ def run_batch_cl(centers, sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, trans_ID
 
 
 def run_batch_cl2(centers, sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, trans_IDEC, src, tgt):
-
     """
         This function runs part of the inference for each sample
     
     """
 
     max_len = max_lens[sample_n]
-    ys = torch.ones(1, 1, n_tasks).fill_(BOS_IDX).to(DEVICE) #.type(torch.long)
+    ys = torch.ones(1, 1, n_tasks).fill_(BOS_IDX).to(DEVICE) 
     q = []
     for i in range(max_len-1):
         src_ = src[0:(i+1), sample_n:(sample_n+1), :].to(DEVICE)
-        src_mask = torch.zeros((src_.shape[0], src_.shape[0]),device=DEVICE).type(torch.bool) #generate_square_subsequent_mask(src_.shape[0]).to(DEVICE)
-        tgt_mask = torch.zeros((ys.shape[0], ys.shape[0]),device=DEVICE).type(torch.bool) #(generate_square_subsequent_mask(ys.size(0)).type(torch.bool)).to(DEVICE)
+        src_mask = torch.zeros((src_.shape[0], src_.shape[0]),device=DEVICE).type(torch.bool) 
+        tgt_mask = torch.zeros((ys.shape[0], ys.shape[0]),device=DEVICE).type(torch.bool)
         memory = trans_IDEC.transformer.encode(src_, src_mask).to(DEVICE)
         out = trans_IDEC.transformer.decode(ys, memory, tgt_mask)
         out = out.transpose(0, 1)
@@ -303,9 +300,7 @@ def run_batch_cl2(centers, sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, trans_I
     return ys[1:, :, :], tgt[1:max_len, sample_n:(sample_n+1), :], ys_noBOSEOS, tgt_noBOSEOS, q
 
 
-
 def run_batch2(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt, chances, cutoff):
-
     """
     Performing sinle sample inference with a transformer, selectively using teacher forcing based on chance threshold.
     
@@ -346,7 +341,6 @@ def run_batch2(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, t
 
 
 def run_batch3(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, tgt, cutoff):
-
     """ 
     Performs  single simple inference with a transformer dynamically using teacher forcing
     based on the distance between the model's prediction and the target  value.
@@ -383,30 +377,10 @@ def run_batch3(sample_n, n_tasks, max_lens, BOS_IDX, DEVICE, transformer, src, t
     return ys[1:, :, :], tgt[1:max_len, sample_n:(sample_n+1), :], ys_noBOSEOS, tgt_noBOSEOS, intervene
 
 
-
-
 def train_autoRegressive(transformer, n_tasks, train_dataloader, optimizer, PAD_IDX, BOS_IDX, DEVICE, fraction):
-    
     """
         Trains an transformer in an autoregressive manner, selectively applying teacher forcing
         to entire sequences based on a predefine probability (fraction).
-
-        Parameters: 
-        - transformer: The transformer model to be trained
-        - n_tasks: Number of tasks to perform
-        - train_data_loader: Dataloader for the training data
-        - optimizer: Optimizer for the training process
-        - PAD_IDX: Padding index used in the data
-        - BOS_IDX: Beginning of Sequence index used in the data
-        - DEVICE: Device on which the model and data are loaded ('cpu' or 'cuda')
-        - fraction: Fraction of batches (used for sampling branches)
-        
-        Returns:
-        - Average loss over the training batches (losses/count)
-        - List of all predicted outputs: (y_all)
-        - List of all target outputs: (tgt_all)
-        - Total number of samples processed (n_samples)
-        - List of memory states from the transformer (memories)
 
     """
 
@@ -457,11 +431,8 @@ def train_autoRegressive(transformer, n_tasks, train_dataloader, optimizer, PAD_
 
 
 def train_autoRegressive_sl(transformer, n_tasks, train_dataloader, optimizer, PAD_IDX, BOS_IDX, DEVICE, fraction, sl=5):
-
     """
     This function trains a transformer model in an autoregressive manner. 
-    Similar to train_autoregressive() above but introduces a sliding window approach (sl)
-    during inference to potentially improve memory efficiency for longer sequences. 
     """
 
     transformer.train()
@@ -670,11 +641,6 @@ def inference_clus2(centers, p, trans_IDEC, n_tasks, train_dataloader, optimizer
 def inference_sample_sl(transformer, n_tasks, dataloader, optimizer, PAD_IDX, BOS_IDX, DEVICE, every, sl=5):
     """
     Performs inference on a subset of the data using a sliding window approach.
-    
-    This function iterates through the dataloader, processing only a small portion of the data
-    determined by the (every) parameter. For each selected batch, it performs a forward pass through
-    the transformer model with a sliding window mechanism, calculates the loss and aggregates predictions,
-    targets and memory outputs.
     """
 
     transformer.eval()
@@ -718,7 +684,12 @@ def inference_sample_sl(transformer, n_tasks, dataloader, optimizer, PAD_IDX, BO
 
 
 def inference_sample(transformer, n_tasks, dataloader, optimizer, PAD_IDX, BOS_IDX, DEVICE, every=2):
+    """
+    Performs inferene on a subset of the data.
 
+    Iterates through the dataloader, processing only a portion of the data determined ny the (every)
+    parameter. 
+    """
 
     transformer.eval()
     losses = 0
@@ -763,7 +734,9 @@ def inference_sample(transformer, n_tasks, dataloader, optimizer, PAD_IDX, BOS_I
 
 
 def inference(transformer, n_tasks, dataloader, optimizer, PAD_IDX, BOS_IDX, DEVICE):
-
+    """
+    Performs inference using the trained transformer model.
+    """
 
     transformer.eval()
     losses = 0
@@ -804,8 +777,10 @@ def inference(transformer, n_tasks, dataloader, optimizer, PAD_IDX, BOS_IDX, DEV
 
 
 def inference_prescription(transformer, n_tasks, dataloader, optimizer, PAD_IDX, BOS_IDX, DEVICE, cutoff):
-    # this function will run inference such that the top 10% furthest prescription vs. AI are replaced with
-    # the prescription itself.
+    """
+    This function will run inference such that the top 10% furthest prescription vs. AI are replaced with
+    the prescription itself.
+    """
 
     transformer.eval()
     losses = 0
@@ -847,7 +822,9 @@ def inference_prescription(transformer, n_tasks, dataloader, optimizer, PAD_IDX,
 
 
 def inference_predict(transformer, n_tasks, dataloader, PAD_IDX, BOS_IDX, DEVICE):
-
+    """
+    Perform inference with the trained transformer model and returns predictions and targets.
+    """
 
     transformer.eval()
     y_all = []
@@ -874,9 +851,12 @@ def inference_predict(transformer, n_tasks, dataloader, PAD_IDX, BOS_IDX, DEVICE
             gc.collect()
     
     return np.concatenate(y_all, axis=0), np.concatenate(tgt_all, axis=0)
-
+    
 
 def inference_predict_clus(km, transformer, n_tasks, dataloader, PAD_IDX, BOS_IDX, DEVICE):
+    """
+    Performs inference with the trained transformer model, incorporating clustering for predictions.
+    """
 
     transformer.eval()
     y_all = []
@@ -907,7 +887,9 @@ def inference_predict_clus(km, transformer, n_tasks, dataloader, PAD_IDX, BOS_ID
 
 def run_encode(sample_n, max_lens, DEVICE, transformer, src):
 
-    # this function runs part of the inference for each sample
+    """
+    This function runs part of the inference for each sample.
+    """
 
     max_len = max_lens[sample_n]
     memories = []
@@ -921,7 +903,9 @@ def run_encode(sample_n, max_lens, DEVICE, transformer, src):
 
 
 def inference_encode(transformer, dataloader, PAD_IDX, DEVICE):
-
+    """
+    Performs inference with the trained transformer model, using clustering for predictions.
+    """
 
     transformer.eval()
     memories = []
@@ -945,7 +929,9 @@ def inference_encode(transformer, dataloader, PAD_IDX, DEVICE):
 
 
 def inference_q(trans_IDEC, n_tasks, dataloader, optimizer, PAD_IDX, BOS_IDX, DEVICE):
-
+    """
+    Performs infernece with thetrained model and obtain task representation (q).
+    """
 
     trans_IDEC.transformer.eval()
     losses = 0
@@ -991,7 +977,10 @@ def inference_q(trans_IDEC, n_tasks, dataloader, optimizer, PAD_IDX, BOS_IDX, DE
 
 
 def inference_q2(trans_IDEC, n_tasks, dataloader, optimizer, PAD_IDX, BOS_IDX, DEVICE):
-
+    """
+    Performs inference and calculates tasks representations (q) after preprocessing 
+    all the data.
+    """
 
     trans_IDEC.transformer.eval()
     losses = 0
