@@ -1,8 +1,4 @@
-
-"""
-    Input variables used in the main.py to train the model
-"""
-
+# Input variables used in the main.py to train the model
 input_var = ["gest_age", "bw", "day_since_birth", 'RxDay',
             # 'RxDayShifted', 'shiftedBy',
             "TodaysWeight", "TPNHours", "max_chole_TPNEHR",
@@ -19,10 +15,8 @@ input_var = ["gest_age", "bw", "day_since_birth", 'RxDay',
             'race_concept_id_8527', 'race_concept_id_8557', 'race_concept_id_8657',
             'FatProduct_SMOFlipid 20%', 'FatProduct_Intralipid 20%', 'FatProduct_Omegaven 10%']
 
-"""
-    Output variables
-"""
 
+# Output variables
 vars_3 = ['FatDose', 'AADose', 'DexDose', 'Acetate', 'Calcium', 'Copper', 'Famotidine', 'Heparin', 'Levocar',
           'Magnesium', 'MVIDose', 'Phosphate', 'Potassium', 'Ranitidine', 'Selenium', 'Sodium', 'Zinc']
 

@@ -8,6 +8,7 @@ from torch.nn.parameter import Parameter
 
 
 class PositionalEncoding(nn.Module):
+    
     """
         Adds positional encoding to token embeddings to inject information about the position of tokens in a sequence.
     
@@ -70,24 +71,28 @@ class multi_head(nn.Module):
         x = self.fc2(x)
         return x
 
+
 class Seq2SeqTransformer(nn.Module):
 
     """
-        A Seq2Seq Transformer network for sequence-to-sequence tasks, with separate embedding layers
-        for source and target,positional encoding, and a feedforward network for generating the final output.
+        A Seq2Seq Transformer network for sequence-to-sequence tasks,
+        with separate embedding layers for source and target,positional encoding,
+        and a feedforward network for generating the final output.
 
     """
 
-    def __init__(self,
-                 num_encoder_layers: int,
-                 num_decoder_layers: int,
-                 emb_size: int,
-                 nhead: int,
-                 tgt_n_tasks: int,
-                 src_size: int,
-                 tgt_size: int,
-                 dim_feedforward: int = 512,
-                 dropout: float = 0.1):
+    def __init__(
+            self,
+            num_encoder_layers: int,
+            num_decoder_layers: int,
+            emb_size: int,
+            nhead: int,
+            tgt_n_tasks: int,
+            src_size: int,
+            tgt_size: int,
+            dim_feedforward: int = 512,
+            dropout: float = 0.1
+            ):
         
         super(Seq2SeqTransformer, self).__init__()
         

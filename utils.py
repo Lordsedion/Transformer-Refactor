@@ -21,8 +21,8 @@ def create_variable_length_dataloader(X_data, Y_data, batch_size=16, shuffle=Fal
         collate_fn=collate_fn,
         shuffle=shuffle
         )
- 
- 
+
+
 # Creates Padding and Attention masks
 def generate_square_subsequent_mask(sz, device):
     mask = (torch.triu(torch.ones((sz, sz), device=device)) == 1).transpose(0, 1)
@@ -32,10 +32,12 @@ def generate_square_subsequent_mask(sz, device):
 
     
 def create_mask(src, tgt, PAD_IDX, device):
-    """
-        Creates masks for the source and target sequence
 
     """
+        Creates masks for the source and target sequence
+        
+    """
+
     src_seq_len = src.shape[0]
     tgt_seq_len = tgt.shape[0]
 
@@ -66,10 +68,12 @@ def pearsonr_corr(input, target, ignored_indices):
 
 
 class EarlyStopping:
+
     """
         Early stopping utility to stop the training when the validation loss stops improving.
 
     """
+
     def __init__(self, patience=10, delta=0, verbose=False):
         self.patience = patience
         self.delta = delta
@@ -77,6 +81,7 @@ class EarlyStopping:
         self.counter = 0
         self.best_val_loss = None
         self.early_stop = False
+
 
     def __call__(self, val_loss):
         if self.best_val_loss is None:

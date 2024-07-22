@@ -19,10 +19,8 @@ from .vars import input_var, vars_3
 # Load the data using pandas
 path = "/data/mock_data.csv"
 data_test = pd.read_csv(path, low_memory=False)
-
 X_ = data_test.set_index("MedicalRecordNum", drop=False).loc[:, data_test.columns.isin(input_var)].copy() # Set the index to 'MedicalRecordNum' and filter columns using 'input_var'
 y_ = data_test.set_index("MedicalRecordNum", drop=False).loc[:, data_test.columns.isin(vars_3)].copy() # Set the index to 'MedicalRecordNum' and filter columns using 'vars_3'
-
 X_list = [torch.Tensor(X_.loc[i, :].to_numpy()) for i in X_.index.unique()] # Convert each row of X_ DataFrame to a PyTorch Tensor and store in a list
 y_list = [torch.Tensor(y_.loc[i, :].to_numpy()) for i in y_.index.unique()] # Convert each row of y_ DataFrame to a PyTorch Tensor and store in a list
 X_list = [i.unsqueeze(0) if len(i.shape) == 1 else i for i in X_list] # Add a new dimension at the 0th index if the tensor has only 1 dimension
@@ -30,18 +28,16 @@ y_list = [i.unsqueeze(0) if len(i.shape) == 1 else i for i in y_list] # Add a ne
 
 
 def create_random_masks(data_length, val_portion, test_portion, random_state=42):
-    np.random.seed(random_state)
 
+    np.random.seed(random_state)
     num_val = int(data_length * val_portion)
     num_test = int(data_length * test_portion)
-
     indices = np.random.permutation(data_length)
 
     # Initialize masks for training, validation and test sets
     mask_train = np.ones(data_length, dtype=bool)
     mask_val = np.zeros(data_length, dtype=bool)
     mask_test = np.zeros(data_length, dtype=bool)
-
     mask_val[indices[:num_val]] = True
     mask_test[indices[num_val:num_val + num_test]] = True
     mask_train[mask_val | mask_test] = False
@@ -66,7 +62,6 @@ y_list = [torch.Tensor(output_scaler.transform(i)) for i in y_list]
 
 # Define special symbols and their indices
 PAD_IDX, BOS_IDX, EOS_IDX = 9999, 2, 3
-
 y_SOS = torch.Tensor([BOS_IDX]).repeat(y_list[0].shape[1]).unsqueeze(0) # Create the Start of Sequence (SOS) tensor for y_list
 y_EOS = torch.Tensor([EOS_IDX]).repeat(y_list[0].shape[1]).unsqueeze(0) # Create the End of Sequence (EOS) tensor for y_list
 X_EOS = torch.Tensor([EOS_IDX]).repeat(X_list[0].shape[1]).unsqueeze(0) # Create the End of Sequence (EOS) tensor for X_list
@@ -239,7 +234,6 @@ for epoch in range(1, NUM_EPOCHS+1):
 
 # Loading the best saved transformer state
 transformer.load_state_dict(best_model_state)
-
 torch.save(transformer.state_dict(), '/state_dicts/cv34_embed512_final.pth')
 transformer.load_state_dict(torch.load('/state_dicts/cv34_embed512_final.pth'))
 
@@ -267,18 +261,19 @@ np.median([pearsonr(
 sample_wise_val, y_val = inference_predict(transformer, y_.shape[1], val_dataloader, PAD_IDX, BOS_IDX, DEVICE)
 sample_wise_test, y_test = inference_predict(transformer, y_.shape[1], test_dataloader, PAD_IDX, BOS_IDX, DEVICE)
 sample_wise_train, y_train = inference_predict(transformer, y_.shape[1], train_dataloader, PAD_IDX, BOS_IDX, DEVICE)
-
 sample_wise_val_latent = inference_encode(transformer, val_dataloader, PAD_IDX, DEVICE).numpy()
 sample_wise_test_latent = inference_encode(transformer, test_dataloader, PAD_IDX, DEVICE).numpy()
 sample_wise_train_latent = inference_encode(transformer, train_dataloader, PAD_IDX, DEVICE).numpy()
 
 index_reset = ['MedicalRecordNum', 'OrderNum']
+
 test_data = pd.concat([
     data_test.loc[data_test.index.isin(list(compress(y_.index.unique(), mask_test))), :].reset_index()[index_reset],
     pd.DataFrame(y_test.reshape(-1, len(vars_3)), columns=['scaled_'+str(i) for i in vars_3]),
     pd.DataFrame(sample_wise_test_latent, columns=['latent_'+str(i) for i in range(EMB_SIZE)]),
     pd.DataFrame(sample_wise_test.reshape(-1, len(vars_3)), columns=['pred_'+i for i in vars_3])
     ], axis=1)
+
 
 train_data = pd.concat([
     data_test.loc[data_test.index.isin(list(compress(y_.index.unique(), mask_train))), :].reset_index()[index_reset],
@@ -288,6 +283,7 @@ train_data = pd.concat([
     axis=1
     )
 
+
 val_data = pd.concat([
     data_test.loc[data_test.index.isin(list(compress(y_.index.unique(), mask_val))), :].reset_index()[index_reset],
     pd.DataFrame(y_val.reshape(-1, len(vars_3)), columns=['scaled_'+str(i) for i in vars_3]),
@@ -295,6 +291,7 @@ val_data = pd.concat([
     pd.DataFrame(sample_wise_val.reshape(-1, len(vars_3)), columns=['pred_'+i for i in vars_3])],
     axis=1
     )
+
 
 # Concatenate train, validation, and test data; reset index and drop duplicates
 all_data = pd.concat([train_data, val_data, test_data], axis=0).reset_index(drop=True).drop_duplicates(index_reset, keep='last')
