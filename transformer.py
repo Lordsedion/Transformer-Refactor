@@ -19,7 +19,7 @@ def load_config(config_path):
 def main(config_path):
     config = load_config(config_path)
     
-    # Load data (customize this part based on your data loading needs)
+    # Load data 
     data_test = pd.read_csv(config['data']['path'], low_memory=False)
     X_ = data_test.set_index("MedicalRecordNum", drop=False).loc[:, data_test.columns.isin(input_var)].copy()
     y_ = data_test.set_index("MedicalRecordNum", drop=False).loc[:, data_test.columns.isin(vars_3)].copy()
