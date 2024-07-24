@@ -46,13 +46,13 @@ def load_config(config_path):
 def main(config_path, train="", output="", model_path=""):
     config = load_config(config_path=config_path)
 
-    if train != "":
+    if train != None:
         config["training"]["path"] = train
 
-    if output != "":
+    if output != None:
         config["training"]["output"] = output
 
-    if model_path != "":
+    if model_path != None:
         config["training"]["model_save_path"]
 
     data = pd.read_csv(config["training"]["path"], low_memory=False)
@@ -301,7 +301,7 @@ def main(config_path, train="", output="", model_path=""):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Arguments")
-    parser.add_argument("--config_path", required=False, help="Path to the config file")
+    parser.add_argument("--config_path", required=True, help="Path to the config file")
     parser.add_argument("--train", required=False, help="Path to training data")
     parser.add_argument("--output", required=False, help="Output directory")
     parser.add_argument("--model_path", required=False, help="Path to the model file")
