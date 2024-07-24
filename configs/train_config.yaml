@@ -1,0 +1,26 @@
+data:
+  path: "data/mock_data.csv"
+
+model:
+  num_encoder_layers: 3
+  num_decoder_layers: 3
+  emb_size: 512
+  nhead: 8
+  ffn_hid_dim: 512
+
+training:
+  batch_size: 256
+  lr: 0.0001
+  num_epochs: 10000
+  patience: 100
+  delta: 0.001
+  device: "cuda"  # or "cpu"
+  model_save_path: "state_dicts/cv34_embed512_final.pth"
+
+validation:
+  batch_size: 256
+  lr: 0.0001
+  num_epochs: 10000
+  patience: 100
+  delta: 0.001
+  device: "cuda"  # or "cpu"
