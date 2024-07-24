@@ -21,7 +21,7 @@
 To run the training script (trainer.py), use the following command:
 
 ```bash
-python trainer.py --config_path <config_path> --train <train> --output <output> --model_path <model_path>
+python trainer.py --config_path configs/train_config.yaml --train data/mock_data.csv --output outputs/df_from_model_test34.csv --model_path state_dicts/cv34_embed512_final.pth
 
 --config_path: Required
 --train: Optional
