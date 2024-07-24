@@ -9,13 +9,22 @@ model:
   ffn_hid_dim: 512
 
 training:
+  path: "data/mock_data.csv"
   batch_size: 256
   lr: 0.0001
   num_epochs: 10000
-  patience: 100
+  patience: 3
   delta: 0.001
-  device: "cuda"  # or "cpu"
+  device: "cpu"  # or "cuda"
   model_save_path: "state_dicts/cv34_embed512_final.pth"
+  output: outputs/df_from_model_test34.csv
+
+training2:
+  lr: 0.0001
+  num_epochs: 5000
+  patience: 1
+  delta: 0.0001
+  device: "cpu" # or "cuda"
 
 validation:
   batch_size: 256
@@ -23,4 +32,4 @@ validation:
   num_epochs: 10000
   patience: 100
   delta: 0.001
-  device: "cuda"  # or "cpu"
+  device: "cpu"  # or "cuda"
