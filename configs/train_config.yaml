@@ -13,16 +13,23 @@ training:
   batch_size: 256
   lr: 0.0001
   num_epochs: 10000
-  patience: 3
+  patience: 100
   delta: 0.001
   device: "cpu"  # or "cuda"
   model_save_path: "state_dicts/cv34_embed512_final.pth"
   output: outputs/df_from_model_test34.csv
 
+inference:
+  path: "data/mock_data.csv"
+  batch_size: 256
+  lr: 0.0001
+  delta: 0.001
+  device: "cpu"  # or "cuda"
+
 training2:
   lr: 0.0001
   num_epochs: 5000
-  patience: 1
+  patience: 100
   delta: 0.0001
   device: "cpu" # or "cuda"
 
