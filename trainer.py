@@ -6,6 +6,8 @@ from utils import create_variable_length_dataloader, EarlyStopping  # Import uti
 from vars import input_var, vars_3  # Import your variables
 from sklearn.preprocessing import StandardScaler
 import numpy as np
+import matplotlib.pyplot as plt
+from IPython import display
 import argparse
 import gc
 import torch.nn as nn
@@ -136,6 +138,7 @@ def main(config_path, train="", output="", model_path=""):
 
     # Training loop
     best_val_loss = float("inf")
+    losses = []
     for epoch in range(1, config["training"]["num_epochs"]+1):
         train_loss, r_train = train_teacherEnforce(
             model=transformer,
@@ -155,6 +158,23 @@ def main(config_path, train="", output="", model_path=""):
          EOS_IDX,
          config['training']['device']
          )
+        losses.append(train_loss)
+        display.clear_output(wait=True)
+        display.display(plt.gcf())
+        plt.clf()
+        plt.plot(
+            [i for i in range(len(losses))],
+            losses,
+            linestyle="-",
+            color="r",
+            label = "Train losses"
+            )
+        plt.xlabel("No of Iterations")
+        plt.ylabel("Losses")
+        plt.title("Train losses over iterations")
+        plt.legend()
+        plt.show(block=False)
+        plt.pause(0.1)
         
         print(f"Here: Epoch: {epoch}, Train_loss: {train_loss:.3f} Val loss: {val_loss:.3f} Train r: {r_train:.3f} Val r: {r_val:.3f}")
 
@@ -178,6 +198,7 @@ def main(config_path, train="", output="", model_path=""):
         verbose=True
         )
 
+    train_2_losses = []
     for epoch in range(1, config["training"]["num_epochs"]+1):
 
         train_loss, y_all_, tgt_all_, n_samples_, _ = train_autoRegressive(
@@ -210,6 +231,24 @@ def main(config_path, train="", output="", model_path=""):
             BOS_IDX,
             config["training2"]["device"]
             )
+        
+        train_2_losses.append(train_loss)
+        display.clear_output(wait=True)
+        display.display(plt.gcf())
+        plt.clf()
+        plt.plot(
+            [i for i in range(len(train_2_losses))],
+            train_2_losses,
+            linestyle="-",
+            color="r",
+            label = "Train losses"
+            )
+        plt.xlabel("No of Iterations")
+        plt.ylabel("Losses")
+        plt.title("Train losses over iterations")
+        plt.legend()
+        plt.show(block=False)
+        plt.pause(0.1)
         
         n_samples_ += n_samples_
         r_train = pearsonr(np.concatenate(y_all_), np.concatenate(tgt_all_))[0]
